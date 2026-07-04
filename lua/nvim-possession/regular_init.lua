@@ -11,6 +11,7 @@ local M = {}
 
 local PRINT_CUSTOM_DEBUG = true
 local USE_PRINT = false
+local USE_SYSTEM_NOTIFICATION = true
 
 local function print_custom(...)
 	if not PRINT_CUSTOM_DEBUG then
@@ -28,7 +29,14 @@ local function print_custom(...)
 	else
 		vim.notify(msg, vim.log.levels.INFO)
 	end
+
+	if USE_SYSTEM_NOTIFICATION then
+		utils.send_notification(msg)
+	end
 end
+
+print_custom("test")
+vim.notify("allo?", vim.log.levels.ERROR)
 
 ---expose the following interfaces:
 ---require("nvim-possession").new()
@@ -65,6 +73,7 @@ M.setup = function(user_opts)
 			local confirm = vim.fn.confirm("overwrite session?", "&Yes\n&No", 2)
 			if confirm == 1 then
 				if type(user_config.save_hook) == "function" then
+					print_custom("called save_hook")
 					user_config.save_hook()
 				end
 				vim.cmd.mksession({ args = { get_session_file(cur_session) }, bang = true })
