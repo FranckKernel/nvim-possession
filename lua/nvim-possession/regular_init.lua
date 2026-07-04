@@ -43,9 +43,9 @@ end
 
 ---@param user_opts table
 M.setup = function(user_opts)
-	local fzf_ok, fzf = pcall(require, "fzf-lua")
-	if not fzf_ok then
-		print_custom("fzf-lua required as dependency")
+	local telescope_ok, telescope = pcall(require, "telescope")
+	if not telescope_ok then
+		print_custom("telescope required as dependency")
 		return
 	end
 
@@ -101,7 +101,6 @@ M.setup = function(user_opts)
 			end
 		end
 	end
-	fzf.config.set_action_helpstr(M.new, "new-session")
 
 	---load selected session
 	---@param selected string
@@ -116,7 +115,6 @@ M.setup = function(user_opts)
 			user_config.post_hook()
 		end
 	end
-	fzf.config.set_action_helpstr(M.load, "load-session")
 
 	-- create a new session given a name
 	M.create = function(session_name)
@@ -141,7 +139,6 @@ M.setup = function(user_opts)
 			print_custom("⚠️ Session '" .. session_name .. "' already exists")
 		end
 	end
-	fzf.config.set_action_helpstr(M.create, "create-session")
 
 	-- Function to either load or create a session
 	M.load_or_create = function(session_name)
@@ -174,7 +171,6 @@ M.setup = function(user_opts)
 			vim.g[user_config.sessions.sessions_variable] = vim.fs.basename(session_name) -- Set the session variable
 		end
 	end
-	fzf.config.set_action_helpstr(M.load_or_create, "load-or-create-session")
 	-- In Lua, define a function that optionally loads session then opens files
 
 	M.load_session_and_open = function(session_name, files)
@@ -253,7 +249,6 @@ M.setup = function(user_opts)
 			end
 		end
 	end
-	fzf.config.set_action_helpstr(M.delete_selected, "delete-session")
 
 	--delete current active session
 	M.delete = function()
@@ -276,62 +271,121 @@ M.setup = function(user_opts)
 	---list all existing sessions and their files
 	---return fzf picker
 	M.list = function()
-		local iter = vim.uv.fs_scandir(user_config.sessions.sessions_path)
+		-- 1. Check if sessions directory exists
+		local session_path = user_config.sessions.sessions_path
+		local iter = vim.uv.fs_scandir(session_path)
 		if iter == nil then
-			print_custom("session folder " .. user_config.sessions.sessions_path .. " does not exist")
+			print_custom("session folder " .. session_path .. " does not exist")
 			return
 		end
+
+		-- 2. Check if there are any sessions
 		local next = vim.uv.fs_scandir_next(iter)
 		if next == nil then
 			print_custom("no saved sessions")
 			return
 		end
 
-		local function list_sessions(fzf_cb)
-			local sessions = {}
-			for name, type in vim.fs.dir(user_config.sessions.sessions_path) do
-				if type == "file" then
-					local stat = vim.uv.fs_stat(user_config.sessions.sessions_path .. name)
-					if stat then
-						table.insert(sessions, { name = name, mtime = stat.mtime })
-					end
+		-- 3. Collect all session files
+		local sessions = {}
+		for name, type in vim.fs.dir(session_path) do
+			if type == "file" and name:match("%.vim$") then
+				local stat = vim.uv.fs_stat(session_path .. name)
+				if stat then
+					table.insert(sessions, { name = name, mtime = stat.mtime })
 				end
 			end
-			table.sort(sessions, function(a, b)
-				if type(user_config.sort) == "function" then
-					return user_config.sort(a, b)
-				else
-					return sort.alpha_sort(a, b)
-				end
-			end)
-			for _, sess in ipairs(sessions) do
-				fzf_cb(sess.name)
-			end
-			fzf_cb()
 		end
 
-		local opts = {
-			user_config = user_config,
-			prompt = user_config.sessions.sessions_icon .. user_config.sessions.sessions_prompt,
-			cwd_prompt = false,
-			file_icons = false,
-			git_icons = false,
-			cwd_header = false,
-			no_header = true,
+		-- 4. Check if there are any .vim sessions
+		if #sessions == 0 then
+			print_custom("no .vim session files found")
+			return
+		end
 
-			previewer = ui.session_previewer,
-			hls = user_config.fzf_hls,
-			winopts = user_config.fzf_winopts,
-			cwd = user_config.sessions.sessions_path,
-			actions = {
-				["enter"] = M.load,
-				["ctrl-x"] = { M.delete_selected, fzf.actions.resume, header = "delete session" },
-				["ctrl-n"] = { fn = M.new, header = "new session" },
-			},
+		-- 5. Sort sessions (same as fzf-lua version)
+		table.sort(sessions, function(a, b)
+			if type(user_config.sort) == "function" then
+				return user_config.sort(a, b)
+			else
+				return sort.alpha_sort(a, b)
+			end
+		end)
+
+		-- 6. Extract just the names for the picker
+		local session_names = {}
+		for _, sess in ipairs(sessions) do
+			table.insert(session_names, sess.name)
+		end
+
+		-- 7. Create the picker
+		local pickers = require("telescope.pickers")
+		local finders = require("telescope.finders")
+		local conf = require("telescope.config").values
+		local actions = require("telescope.actions")
+		local action_state = require("telescope.actions.state")
+
+		-- 8. Build options
+		local opts = {
+			-- Prompt configuration
+			prompt_title = user_config.sessions.sessions_icon .. user_config.sessions.sessions_prompt,
+			-- Show keybinding hints in the title
+			results_title = "Load session 			<CR> load | <C-x> delete | <C-n> new ",
+
+			-- Border style (mapping from fzf-lua's border)
+			border = {},
 		}
-		opts = require("fzf-lua.config").normalize_opts(opts, {})
-		opts = require("fzf-lua.core").set_header(opts, { "actions" })
-		fzf.fzf_exec(list_sessions, opts)
+
+		-- 9. Create previewer
+		local previewer = ui.create_buffer_previewer(session_path)
+
+		-- 10. Create and start the picker
+		pickers
+			.new(opts, {
+				finder = finders.new_table({
+					results = session_names,
+					entry_maker = function(line)
+						return {
+							value = line,
+							display = line,
+							ordinal = line,
+						}
+					end,
+				}),
+
+				previewer = previewer,
+				sorter = conf.generic_sorter(opts),
+
+				-- 11. Map keybindings (replaces fzf-lua's actions)
+				attach_mappings = function(prompt_bufnr, map)
+					-- ENTER key: Load session (was "enter" action)
+					map("i", "<CR>", function()
+						local selection = action_state.get_selected_entry()
+						if selection then
+							actions.close(prompt_bufnr)
+							M.load({ selection[1] })
+						end
+					end)
+
+					-- Ctrl-x: Delete session (was "ctrl-x" action)
+					map("i", "<C-x>", function()
+						local selection = action_state.get_selected_entry()
+						if selection then
+							actions.close(prompt_bufnr)
+							M.delete_selected({ selection[1] })
+						end
+					end)
+
+					-- Ctrl-n: New session (was "ctrl-n" action)
+					map("i", "<C-n>", function()
+						actions.close(prompt_bufnr)
+						M.new()
+					end)
+
+					return true
+				end,
+			})
+			:find()
 	end
 
 	if user_config.autoload and vim.fn.argc() == 0 then

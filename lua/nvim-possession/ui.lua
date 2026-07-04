@@ -1,34 +1,47 @@
 local utils = require("nvim-possession.utils")
 
-local builtin_ok, builtin = pcall(require, "fzf-lua.previewer.builtin")
-if not builtin_ok then
-	return
-end
-
 --- extend fzf builtin previewer
 local M = {}
-M.session_previewer = builtin.base:extend()
 
-M.session_previewer.new = function(self, o, opts, fzf_win)
-	M.session_previewer.super.new(self, o, opts, fzf_win)
-	setmetatable(self, M.session_previewer)
-	return self
+--- Create a Telescope buffer previewer for session files
+--- @param session_path string The path to the session directory
+--- @return table A Telescope previewer object
+M.create_buffer_previewer = function(session_path)
+	local previewers = require("telescope.previewers")
+
+	return previewers.new_buffer_previewer({
+		define_preview = function(self, entry, status)
+			if not entry or not entry.value then
+				return
+			end
+
+			-- Get the session file path
+			local session_file = session_path .. entry.value
+
+			-- Get the list of files in the session
+			local files = utils.session_files(session_file)
+
+			-- Clear the preview buffer
+			vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, {})
+
+			-- If there are files, display them
+			if files and #files > 0 then
+				vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, files)
+
+				-- Add a header line
+				local header = string.format("📌 Session: %s (%d files)", entry.value, #files)
+				vim.api.nvim_buf_set_lines(self.state.bufnr, 0, 0, false, { header, string.rep("─", #header) })
+			else
+				vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, {
+					"📭 No files found in this session",
+				})
+			end
+		end,
+		winopts = {
+			wrap = false,
+			number = false,
+		},
+	})
 end
 
-M.session_previewer.populate_preview_buf = function(self, entry_str)
-	local tmpbuf = self:get_tmp_buffer()
-	local files = utils.session_files(self.opts.user_config.sessions.sessions_path .. entry_str)
-
-	vim.api.nvim_buf_set_lines(tmpbuf, 0, -1, false, files)
-	self:set_preview_buf(tmpbuf)
-	self.win:update_preview_scrollbar()
-end
-
-M.session_previewer.gen_winopts = function(self)
-	local new_winopts = {
-		wrap = false,
-		number = false,
-	}
-	return vim.tbl_extend("force", self.winopts, new_winopts)
-end
 return M
