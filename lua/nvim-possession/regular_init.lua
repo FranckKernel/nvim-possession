@@ -35,9 +35,6 @@ local function print_custom(...)
 	end
 end
 
-print_custom("test")
-vim.notify("allo?", vim.log.levels.ERROR)
-
 ---expose the following interfaces:
 ---require("nvim-possession").new()
 ---require("nvim-possession").list()
