@@ -50,8 +50,17 @@ M.setup = function(user_opts)
 	end
 
 	local user_config = vim.tbl_deep_extend("force", config, user_opts or {})
-	local function get_session_file_no_ext(name) return vim.fs.normalize(user_config.sessions.sessions_path .. name) end
-	local function get_session_file(name) return vim.fs.normalize(user_config.sessions.sessions_path .. name .. ".vim") end
+	local function get_session_file_no_ext(name)
+		if name == nil then
+			print_custom("Oops, name is nil;" .. vim.inspect(name))
+		end
+		name = name:gsub("%.vim$", "")
+		return vim.fs.normalize(user_config.sessions.sessions_path .. name)
+	end
+	local function get_session_file(name)
+		name = name:gsub("%.vim$", "")
+		return vim.fs.normalize(user_config.sessions.sessions_path .. "/" .. name .. ".vim")
+	end
 
 	M.user_config = user_config
 	-- kinda bad but who cares
@@ -83,13 +92,13 @@ M.setup = function(user_opts)
 
 	---save current session if session path exists
 	---return if path does not exist
-	M.new = function()
+
+	local create_session = function(name)
 		if vim.fn.finddir(user_config.sessions.sessions_path) == "" then
 			print_custom("sessions_path does not exist")
 			return
 		end
 
-		local name = vim.fn.input("name: ")
 		if name ~= "" then
 			if vim.fn.filereadable(get_session_file(name)) == 0 then
 				vim.fn.mkdir(user_config.sessions.sessions_path, "p")
@@ -100,6 +109,16 @@ M.setup = function(user_opts)
 				print_custom("session already exists")
 			end
 		end
+	end
+
+	M.new = function()
+		if vim.fn.finddir(user_config.sessions.sessions_path) == "" then
+			print_custom("sessions_path does not exist")
+			return
+		end
+
+		local name = vim.fn.input("name: ")
+		create_session(name)
 	end
 
 	---load selected session
@@ -239,6 +258,8 @@ M.setup = function(user_opts)
 	---delete selected session
 	---@param selected string
 	M.delete_selected = function(selected)
+		print_custom("Selected = : " .. vim.inspect(selected))
+
 		local session = get_session_file_no_ext(selected[1])
 		local confirm = vim.fn.confirm("delete session?", "&Yes\n&No", 2)
 		if confirm == 1 then
@@ -283,7 +304,6 @@ M.setup = function(user_opts)
 		local next = vim.uv.fs_scandir_next(iter)
 		if next == nil then
 			print_custom("no saved sessions")
-			return
 		end
 
 		-- 3. Collect all session files
@@ -295,12 +315,6 @@ M.setup = function(user_opts)
 					table.insert(sessions, { name = name, mtime = stat.mtime })
 				end
 			end
-		end
-
-		-- 4. Check if there are any .vim sessions
-		if #sessions == 0 then
-			print_custom("no .vim session files found")
-			return
 		end
 
 		-- 5. Sort sessions (same as fzf-lua version)
@@ -363,23 +377,33 @@ M.setup = function(user_opts)
 						local selection = action_state.get_selected_entry()
 						if selection then
 							actions.close(prompt_bufnr)
-							M.load({ selection[1] })
+							M.load({ selection.value })
 						end
 					end)
 
 					-- Ctrl-x: Delete session (was "ctrl-x" action)
 					map("i", "<C-x>", function()
 						local selection = action_state.get_selected_entry()
+						print_custom("The selection : " .. vim.inspect(selection))
 						if selection then
 							actions.close(prompt_bufnr)
-							M.delete_selected({ selection[1] })
+							M.delete_selected({ selection.value })
 						end
 					end)
 
 					-- Ctrl-n: New session (was "ctrl-n" action)
 					map("i", "<C-n>", function()
+						local written_text = action_state.get_current_line()
+
+						written_text = vim.trim(written_text or "")
+
+						if written_text == "" then
+							print_custom("Session name is empty")
+							return
+						end
+
 						actions.close(prompt_bufnr)
-						M.new()
+						vim.schedule(function() create_session(written_text) end)
 					end)
 
 					return true
